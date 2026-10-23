@@ -16,6 +16,10 @@ jobs:
     name: Build debug APK
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,29 +30,47 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Prepare Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android API 35
+      # The GitHub Ubuntu 24.04 runner includes Android API 35 and build tools 35.
+      # Do not run android-actions/setup-android: it needlessly downloads
+      # commandline tools and can fail during SDK licence/repository fetching.
+      - name: Verify preinstalled Android SDK (no download)
+        shell: bash
         run: |
-          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+          set -euo pipefail
+          echo "Android SDK: $ANDROID_SDK_ROOT"
+          test -f "$ANDROID_SDK_ROOT/platforms/android-35/android.jar" || {
+            echo '::error::Android SDK API 35 missing from Ubuntu 24.04 runner'
+            exit 1
+          }
+          test -x "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" || {
+            echo '::error::Android build-tools 35.0.0 missing from Ubuntu 24.04 runner'
+            exit 1
+          }
+          ls -ld "$ANDROID_SDK_ROOT/platforms/android-35" "$ANDROID_SDK_ROOT/build-tools/35.0.0"
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
       - name: Unpack app source
+        shell: bash
         run: |
-          test -f ARSYuanConverter_OneUpload.zip
+          set -euo pipefail
+          test -f ARSYuanConverter_OneUpload.zip || {
+            echo '::error::Missing repository-root ARSYuanConverter_OneUpload.zip'
+            exit 1
+          }
           mkdir -p source
-          unzip -q ARSYuanConverter_OneUpload.zip -d source
+          unzip -q -o ARSYuanConverter_OneUpload.zip -d source
           test -f source/settings.gradle
           test -f source/app/build.gradle
           test -f source/app/src/main/AndroidManifest.xml
 
       - name: Unit-test exchange-rate calculations
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p /tmp/fx-unit-tests
           javac -d /tmp/fx-unit-tests \
             source/app/src/main/java/com/exchange/arsusdcny/FxCalculator.java \
@@ -60,7 +82,9 @@ jobs:
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Prepare installable APK
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
           cp source/app/build/outputs/apk/debug/app-debug.apk dist/ARS_USD_CNY_Rates_v1.0-debug.apk
           sha256sum dist/ARS_USD_CNY_Rates_v1.0-debug.apk
